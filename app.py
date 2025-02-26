@@ -6,7 +6,7 @@ import os
 
 
 class LSTMModel(nn.Module):
-    def __init__(self, input_size=1, hidden_size=100, num_layers=3, max_seq_length=25):
+    def __init__(self, input_size=1, hidden_size=50, num_layers=3, max_seq_length=25):
         super(LSTMModel, self).__init__()
         self.max_seq_length = max_seq_length
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.2)
@@ -22,7 +22,7 @@ class LSTMModel(nn.Module):
 MODEL_PATH = '/model/best_lstm_model.pth'
 
 # Initialize or load the model
-max_seq_length = 25
+max_seq_length = 30
 model = LSTMModel(max_seq_length=max_seq_length)
 try:
     model.load_state_dict(torch.load(MODEL_PATH))
@@ -31,11 +31,11 @@ except FileNotFoundError:
     print("Starting with a fresh model")
 
 model.train()
-optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 criterion = nn.MSELoss()
 
 # Configuration
-min_seq_length = 5
+min_seq_length = 10
 data_buffer = deque(maxlen=1000)
 data_min, data_max = 1.0, 23.0
 last_sequence = None
