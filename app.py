@@ -4,7 +4,6 @@ from flask import Flask, request, jsonify, send_file
 from collections import deque
 import os
 
-
 class LSTMModel(nn.Module):
     def __init__(self, input_size=1, hidden_size=100, num_layers=3, max_seq_length=25):
         super(LSTMModel, self).__init__()
@@ -16,7 +15,6 @@ class LSTMModel(nn.Module):
         x, _ = self.lstm(x)
         x = self.fc(x[:, -1, :])
         return x
-
 
 # Define model path on persistent disk
 MODEL_PATH = '/model/best_lstm_model.pth'
@@ -37,13 +35,12 @@ criterion = nn.MSELoss()
 # Configuration
 min_seq_length = 10
 data_buffer = deque(maxlen=1000)
-data_min, data_max = 1.0, 150.0
+data_min, data_max = 1.0, 100.0  # Updated for expected range (1.0–100.0, covering 95%+ of data)
 last_sequence = None
 request_count = 0
 save_interval = 10
 
 app = Flask(__name__)
-
 
 @app.route('/predict', methods=['POST'])
 def predict_and_train():
@@ -58,8 +55,9 @@ def predict_and_train():
     sequence = data[-seq_length:]
 
     data_buffer.extend(data)
-    data_min = min(data_min, min(data))
-    data_max = max(data_max, max(data))
+    # Keep data_min/data_max static for stability—commented out dynamic updates
+    # data_min = min(data_min, min(data))
+    # data_max = max(data_max, max(data))
 
     seq_normalized = [(x - data_min) / (data_max - data_min) for x in sequence]
     seq_tensor = torch.FloatTensor(seq_normalized).view(1, seq_length, 1)
@@ -67,6 +65,7 @@ def predict_and_train():
     with torch.no_grad():
         pred_normalized = model(seq_tensor).item()
     pred = pred_normalized * (data_max - data_min) + data_min
+    pred = max(1.0, min(100.0, pred))  # Clamp predictions to 1.0–100.0
 
     loss = None
     if last_sequence is not None and len(data) > len(last_sequence):
@@ -90,12 +89,15 @@ def predict_and_train():
             print(f'Saved model to persistent disk after {request_count} requests')
             request_count = 0
 
+        # Log high values for monitoring
+        if actual > 100.0:
+            print(f"High value detected - Actual: {actual:.4f}, Predicted: {pred:.4f}")
+
         print(
             f'Trained - Seq Length: {last_seq_length}, Predicted: {pred:.4f}, Actual: {actual:.4f}, Loss: {loss.item():.4f}')
 
     last_sequence = data.copy()
     return jsonify({'prediction': pred, 'loss': loss.item() if loss is not None else None})
-
 
 @app.route('/download-model', methods=['GET'])
 def download_model():
@@ -103,7 +105,6 @@ def download_model():
         return send_file(MODEL_PATH, as_attachment=True, download_name='best_lstm_model.pth')
     else:
         return jsonify({'error': 'Model file not found. Train the model first.'}), 404
-
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
