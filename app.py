@@ -3,6 +3,7 @@ import torch.nn as nn
 from flask import Flask, request, jsonify, send_file
 from collections import deque
 import os
+import json
 
 class LSTMModel(nn.Module):
     def __init__(self, input_size=1, hidden_size=100, num_layers=3, max_seq_length=25):
@@ -16,8 +17,9 @@ class LSTMModel(nn.Module):
         x = self.fc(x[:, -1, :])
         return x
 
-# Define model path on persistent disk
+# Define paths on persistent disk
 MODEL_PATH = '/model/best_lstm_model.pth'
+TRAINING_LOG_PATH = '/model/training_log.json'
 
 # Initialize or load the model
 max_seq_length = 25
@@ -41,6 +43,12 @@ request_count = 0
 save_interval = 10
 
 app = Flask(__name__)
+
+# Initialize or load training log
+training_log = []
+if os.path.exists(TRAINING_LOG_PATH):
+    with open(TRAINING_LOG_PATH, 'r') as f:
+        training_log = json.load(f)
 
 @app.route('/predict', methods=['POST'])
 def predict_and_train():
@@ -89,6 +97,15 @@ def predict_and_train():
             print(f'Saved model to persistent disk after {request_count} requests')
             request_count = 0
 
+        # Store predicted and actual values
+        training_log.append({
+            'sequence': sequence,  # Last 25 elements
+            'predicted': float(pred),  # Convert to float for JSON
+            'actual': float(actual)
+        })
+        with open(TRAINING_LOG_PATH, 'w') as f:
+            json.dump(training_log, f)
+
         # Log high values for monitoring
         if actual > 100.0:
             print(f"High value detected - Actual: {actual:.4f}, Predicted: {pred:.4f}")
@@ -106,6 +123,21 @@ def download_model():
     else:
         return jsonify({'error': 'Model file not found. Train the model first.'}), 404
 
+@app.route('/download-log', methods=['GET'])
+def download_log():
+    if os.path.exists(TRAINING_LOG_PATH):
+        return send_file(TRAINING_LOG_PATH, as_attachment=True, download_name='training_log.json')
+    else:
+        return jsonify({'error': 'Training log not found. Train the model first.'}), 404
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
+
+# Summary of Endpoints:
+# /predict (POST): Receives a sequence of numbers, predicts the next value, trains the model if the sequence extends the last one,
+#                  returns a JSON with the prediction and loss (if trained). Saves model every 10 training steps to persistent disk.
+# /download-model (GET): Downloads the trained model file (best_lstm_model.pth) from the persistent disk if it exists,
+#                       returns a JSON error if not found.
+# /download-log (GET): Downloads the training log file (training_log.json) containing sequence, predicted, and actual values,
+#                     returns a JSON error if not found.
