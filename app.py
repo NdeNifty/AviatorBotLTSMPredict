@@ -4,7 +4,7 @@ from flask import Flask, request, jsonify
 from collections import deque
 
 class LSTMModel(nn.Module):
-    def __init__(self, input_size=1, hidden_size=100, num_layers=3, max_seq_length=25):
+    def __init__(self, input_size=1, hidden_size=50, num_layers=3, max_seq_length=25):
         super(LSTMModel, self).__init__()
         self.max_seq_length = max_seq_length
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.2)
@@ -25,7 +25,7 @@ except FileNotFoundError:
     print("Starting with a fresh model")
 
 model.train()
-optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 criterion = nn.MSELoss()
 
 # Configuration
