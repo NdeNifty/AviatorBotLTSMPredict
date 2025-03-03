@@ -49,21 +49,28 @@ save_interval = 10
 
 app = Flask(__name__)
 
-# Initialize or load training log with size check
-training_log = []
-if os.path.exists(TRAINING_LOG_PATH):
-    try:
-        with open(TRAINING_LOG_PATH, 'r') as f:
-            training_log = json.load(f)
-        print(f"Loaded training log with {len(training_log)} entries")
-    except json.JSONDecodeError:
-        print("Corrupted training log, starting fresh")
-else:
-    print("No training log found, starting fresh")
+# Function to load or initialize training log dynamically
+def load_or_init_training_log():
+    global training_log
+    if os.path.exists(TRAINING_LOG_PATH):
+        try:
+            with open(TRAINING_LOG_PATH, 'r') as f:
+                training_log = json.load(f)
+            print(f"Loaded training log with {len(training_log)} entries")
+        except json.JSONDecodeError:
+            print("Corrupted training log, starting fresh with empty list")
+            training_log = []
+    else:
+        print("No training log found, starting fresh with empty list")
+        training_log = []
+    return training_log
+
+# Load or initialize training log at startup
+training_log = load_or_init_training_log()
 
 @app.route('/predict', methods=['POST'])
 def predict_and_train():
-    global data_min, data_max, last_sequence, request_count
+    global data_min, data_max, last_sequence, request_count, training_log
 
     data = request.json['sequence']
     array_length = len(data)
@@ -108,7 +115,9 @@ def predict_and_train():
             print(f'Saved model to persistent disk after {request_count} requests')
             request_count = 0
 
-        # Store predicted and actual values with size check
+        # Ensure training_log is available and append new entry
+        if not hasattr(globals(), 'training_log') or training_log is None:
+            training_log = load_or_init_training_log()
         training_log.append({
             'sequence': sequence,  # Last 25 elements
             'predicted': float(pred),  # Convert to float for JSON
@@ -169,22 +178,21 @@ def upload_model():
     
     return jsonify({'message': 'Model successfully uploaded and overwrote existing model'})
 
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
-
 @app.route('/delete-log', methods=['DELETE'])
 def delete_log():
     global training_log
 
     if os.path.exists(TRAINING_LOG_PATH):
         os.remove(TRAINING_LOG_PATH)
-        training_log = []
+        training_log = []  # Reset training_log to empty list
         print("Training log deleted successfully")
         return jsonify({'message': 'Training log deleted successfully'}), 200
     else:
         return jsonify({'error': 'Training log not found'}), 404
 
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
 
 # Summary of Endpoints:
 # /predict (POST): Receives a sequence of numbers, predicts the next value, trains the model if the sequence extends the last one,
@@ -196,4 +204,4 @@ def delete_log():
 #                     returns a JSON error if not found.
 # /upload-model (POST): Uploads a new best_lstm_model.pth file to overwrite any existing model on the persistent disk,
 #                      returns a JSON success message or error if the file is invalid or upload fails.
-# /delete-log (DELETE): Deletes the training log file (training_log.json) from the persistent disk if it exists,
+# /delete-log (DELETE): Deletes the training log file (training_log.json) from the persistent disk if it exists, resets the in-memory training_log.
