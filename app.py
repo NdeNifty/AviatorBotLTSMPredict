@@ -173,6 +173,19 @@ if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
 
+@app.route('/delete-log', methods=['DELETE'])
+def delete_log():
+    global training_log
+
+    if os.path.exists(TRAINING_LOG_PATH):
+        os.remove(TRAINING_LOG_PATH)
+        training_log = []
+        print("Training log deleted successfully")
+        return jsonify({'message': 'Training log deleted successfully'}), 200
+    else:
+        return jsonify({'error': 'Training log not found'}), 404
+
+
 # Summary of Endpoints:
 # /predict (POST): Receives a sequence of numbers, predicts the next value, trains the model if the sequence extends the last one,
 #                  returns a JSON with the prediction and loss (if trained). Saves model every 10 training steps to persistent disk
@@ -183,3 +196,4 @@ if __name__ == '__main__':
 #                     returns a JSON error if not found.
 # /upload-model (POST): Uploads a new best_lstm_model.pth file to overwrite any existing model on the persistent disk,
 #                      returns a JSON success message or error if the file is invalid or upload fails.
+# /delete-log (DELETE): Deletes the training log file (training_log.json) from the persistent disk if it exists,
