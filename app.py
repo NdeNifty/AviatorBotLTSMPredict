@@ -42,7 +42,7 @@ criterion = nn.MSELoss()
 # Configuration
 min_seq_length = 10
 data_buffer = deque(maxlen=1000)
-data_min, data_max = 1.0, 300.0  # Initial range, match local dynamic normalization (capped at 300.0)
+data_min, data_max = 1.0, 100.0  # Adjusted max to focus on 95% of data (≤100.0)
 last_sequence = None
 request_count = 0
 save_interval = 10
@@ -81,9 +81,9 @@ def predict_and_train():
     sequence = data[-seq_length:]  # Last 25 elements
 
     data_buffer.extend(data)
-    # Dynamic normalization with cap for stability, matching local script
+    # Dynamic normalization with cap for stability, set to 100.0 for 95% of data
     data_min = min(data_min, min(data))
-    data_max = min(max(data_max, max(data)), 300.0)  # Cap at 300.0 for rare highs
+    data_max = min(max(data_max, max(data)), 100.0)  # Cap at 100.0 to focus on 1.0–100.0
 
     seq_normalized = [(x - data_min) / (data_max - data_min) for x in sequence]
     seq_tensor = torch.FloatTensor(seq_normalized).view(1, seq_length, 1)
@@ -133,7 +133,7 @@ def predict_and_train():
             with open(TRAINING_LOG_PATH, 'w') as f:
                 json.dump(training_log, f)
 
-        # Log high values for monitoring
+        # Log high values for monitoring (now >100.0, but capped at 100.0 in prediction)
         if actual > 100.0:
             print(f"High value detected - Actual: {actual:.4f}, Predicted: {pred:.4f}")
 
