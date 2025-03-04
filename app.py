@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS  # Import CORS from flask_cors
 from collections import deque
 import os
 import json
@@ -51,13 +52,8 @@ request_count = 0
 save_interval = 10
 loss_history = []  # In-memory loss history, capped at 1000 entries
 
-# Initialize the Flask app
-app = Flask(__name__, static_folder='static')
-CORS(app, resources={r"/performance": {"origins": "*"}})
-# Serve the index.html file for performance visualization
-@app.route('/')
-def serve_index():
-    return app.send_static_file('index.html')
+app = Flask(__name__, static_folder='static')  # Enable static file serving for HTML/JavaScript
+CORS(app, resources={r"/performance": {"origins": "*"}})  # Allow all origins for testing
 
 # Function to load or initialize training log dynamically
 def load_or_init_training_log():
@@ -219,6 +215,10 @@ def get_performance():
     
     return jsonify(response)
 
+@app.route('/')
+def serve_index():
+    return app.send_static_file('index.html')
+
 @app.route('/download-model', methods=['GET'])
 def download_model():
     if os.path.exists(MODEL_PATH):
@@ -290,6 +290,7 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=port)
 
 # Summary of Endpoints:
+# / (GET): Serves the static index.html for visualization.
 # /predict (POST): Receives a sequence of numbers, predicts the next value, trains the model if the sequence extends the last one,
 #                  returns a JSON with the prediction and loss (if trained). Saves model every 10 training steps to persistent disk
 #                  and logs predicted/actual values to training_log.json and loss to loss_history.json.
