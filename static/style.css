@@ -15,28 +15,57 @@ h1 {
 
 .charts {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    grid-template-areas: 
+        "performance learning"
+        "predicted predicted"; /* Makes the third chart full width */
     gap: 20px;
     padding: 20px;
 }
 
+#performanceChart {
+    grid-area: performance;
+}
+
+#learningCurveChart {
+    grid-area: learning;
+}
+
+#predictedActualChart {
+    grid-area: predicted;
+    width: 100%; /* Make the third chart full width */
+    aspect-ratio: 4 / 1; /* Wider shape */
+}
+
 canvas {
-    max-width: 100%;
+    max-width: 100%; /* Make charts responsive */
     height: auto;
     background-color: white;
     border: 1px solid #ccc;
-    border-radius: 5px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    border-radius: 10px; /* Rounded corners */
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); /* Smooth shadow effect */
     padding: 10px;
-    aspect-ratio: 16 / 9;
+    transition: transform 0.3s ease-in-out; /* Animation hover effect */
+}
+
+canvas:hover {
+    transform: scale(1.02); /* Slight zoom on hover */
+}
+
+@media (max-width: 900px) {
+    .charts {
+        grid-template-areas:
+            "performance"
+            "learning"
+            "predicted"; /* Stack all charts on smaller screens */
+    }
+
+    #predictedActualChart {
+        aspect-ratio: 16 / 9; /* Normal ratio on small screens */
+    }
 }
 
 @media (max-width: 600px) {
-    .charts {
-        grid-template-columns: 1fr;
-    }
-
     canvas {
-        aspect-ratio: 4 / 3;
+        aspect-ratio: 4 / 3; /* More square-like charts on small screens */
     }
 }
