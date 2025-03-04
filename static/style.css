@@ -3,52 +3,58 @@ body {
     margin: 20px;
     background-color: #f0f0f0;
     max-width: 1200px;
-    margin-left: auto;
-    margin-right: auto;
+    margin: 0 auto; /* Center the entire layout */
+    padding: 20px;
 }
 
 h1 {
     color: #333;
     text-align: center;
     margin-bottom: 20px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
 }
 
 .charts {
     display: grid;
     grid-template-areas: 
         "performance learning"
-        "predicted predicted"; /* Makes the third chart full width */
+        "predicted predicted";
+    grid-template-columns: 1fr 3fr; /* Performance 25%, Learning Curve 75% */
     gap: 20px;
     padding: 20px;
+    align-items: center;
 }
 
 #performanceChart {
     grid-area: performance;
+    height: 400px; /* Same height as learning curve */
 }
 
 #learningCurveChart {
     grid-area: learning;
+    height: 400px; /* Same height as model performance */
 }
 
 #predictedActualChart {
     grid-area: predicted;
-    width: 100%; /* Make the third chart full width */
-    aspect-ratio: 4 / 1; /* Wider shape */
+    width: 100%; /* Full width */
+    height: 400px; /* Fixed height */
+    margin: 0 auto; /* Centered */
 }
 
 canvas {
-    max-width: 100%; /* Make charts responsive */
-    height: auto;
+    max-width: 100%;
     background-color: white;
     border: 1px solid #ccc;
-    border-radius: 10px; /* Rounded corners */
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); /* Smooth shadow effect */
+    border-radius: 15px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     padding: 10px;
-    transition: transform 0.3s ease-in-out; /* Animation hover effect */
+    transition: transform 0.3s ease-in-out;
 }
 
 canvas:hover {
-    transform: scale(1.02); /* Slight zoom on hover */
+    transform: scale(1.02);
 }
 
 @media (max-width: 900px) {
@@ -56,16 +62,25 @@ canvas:hover {
         grid-template-areas:
             "performance"
             "learning"
-            "predicted"; /* Stack all charts on smaller screens */
+            "predicted"; /* Stack vertically for smaller screens */
+        grid-template-columns: 1fr; 
+    }
+
+    #learningCurveChart {
+        height: 300px;
+    }
+
+    #performanceChart {
+        height: 300px;
     }
 
     #predictedActualChart {
-        aspect-ratio: 16 / 9; /* Normal ratio on small screens */
+        height: 300px;
     }
 }
 
 @media (max-width: 600px) {
     canvas {
-        aspect-ratio: 4 / 3; /* More square-like charts on small screens */
+        aspect-ratio: 4 / 3;
     }
 }
