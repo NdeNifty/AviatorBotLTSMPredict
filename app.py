@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS  # Import CORS from flask_cors
+from flask_cors import CORS
 from collections import deque
 import os
 import json
@@ -12,10 +12,10 @@ class LSTMModel(nn.Module):
         super(LSTMModel, self).__init__()
         self.max_seq_length = max_seq_length
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.2)
-        self.fc = nn.Linear(hidden_size, 1)  # No bidirectional, simpler for Hobby
+        self.fc = nn.Linear(hidden_size, 1)
 
     def forward(self, x):
-        x, _ = self.lstm(x)  # No post-LSTM dropout for simplicity
+        x, _ = self.lstm(x)
         x = self.fc(x[:, -1, :])
         return x
 
@@ -24,7 +24,7 @@ MODEL_PATH = '/model/best_lstm_model.pth'
 TRAINING_LOG_PATH = '/model/training_log.json'
 LOSS_HISTORY_PATH = '/model/loss_history.json'
 
-# Initialize or load the model with fallback to GitHub file if no disk model exists
+# Initialize or load the model
 max_seq_length = 25
 model = LSTMModel(max_seq_length=max_seq_length)
 try:
@@ -32,7 +32,7 @@ try:
     print("Loaded existing model from persistent disk")
 except FileNotFoundError:
     try:
-        model.load_state_dict(torch.load('best_lstm_model.pth'))  # Fallback to GitHub file
+        model.load_state_dict(torch.load('best_lstm_model.pth'))
         print("Loaded model from GitHub file, saving to persistent disk")
         torch.save(model.state_dict(), MODEL_PATH)
     except FileNotFoundError:
@@ -40,22 +40,21 @@ except FileNotFoundError:
 
 model.train()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-criterion = nn.HuberLoss(delta=3.0)  # Huber Loss for outlier robustness, delta=3.0 for >100 values
+criterion = nn.HuberLoss(delta=3.0)  # Updated to delta=3.0 for stricter error handling as requested
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5, verbose=True)
 
 # Configuration
 min_seq_length = 10
 data_buffer = deque(maxlen=1000)
-data_min, data_max = 1.0, 100.0  # Initial focus on 94.5% of data (≤100.0)
+data_min, data_max = 1.0, 100.0
 last_sequence = None
 request_count = 0
 save_interval = 10
-loss_history = []  # In-memory loss history, capped at 1000 entries
+loss_history = []
 
-app = Flask(__name__, static_folder='static')  # Enable static file serving for HTML/JavaScript
-CORS(app, resources={r"/performance": {"origins": "*"}})  # Allow all origins for testing
+app = Flask(__name__, static_folder='static')
+CORS(app, resources={r"/performance": {"origins": "https://aviatorbotltsmpredict.onrender.com"}, r"/training-log": {"origins": "https://aviatorbotltsmpredict.onrender.com"}})
 
-# Function to load or initialize training log dynamically
 def load_or_init_training_log():
     global training_log
     if os.path.exists(TRAINING_LOG_PATH):
@@ -63,6 +62,8 @@ def load_or_init_training_log():
             with open(TRAINING_LOG_PATH, 'r') as f:
                 training_log = json.load(f)
             print(f"Loaded training log with {len(training_log)} entries")
+            if len(training_log) > 1000:
+                training_log = training_log[-1000:]
         except json.JSONDecodeError:
             print("Corrupted training log, starting fresh with empty list")
             training_log = []
@@ -71,7 +72,6 @@ def load_or_init_training_log():
         training_log = []
     return training_log
 
-# Function to load or initialize loss history
 def load_or_init_loss_history():
     global loss_history
     if os.path.exists(LOSS_HISTORY_PATH):
@@ -79,7 +79,6 @@ def load_or_init_loss_history():
             with open(LOSS_HISTORY_PATH, 'r') as f:
                 loss_history = json.load(f)
             print(f"Loaded loss history with {len(loss_history)} entries")
-            # Cap loss history to prevent memory overflow
             if len(loss_history) > 1000:
                 loss_history = loss_history[-1000:]
         except json.JSONDecodeError:
@@ -90,7 +89,6 @@ def load_or_init_loss_history():
         loss_history = []
     return loss_history
 
-# Load or initialize training log and loss history at startup
 training_log = load_or_init_training_log()
 loss_history = load_or_init_loss_history()
 
@@ -100,7 +98,8 @@ def calculate_performance(log):
             "mae": 0.0,
             "within_one_percent": 0.0,
             "high_value_count": 0,
-            "low_value_count": 0
+            "low_value_count": 0,
+            "predicted_actual": []  # Keep for existing charts, but we’ll use /training-log for third chart
         }
     
     mae = sum(abs(entry["predicted"] - entry["actual"]) for entry in log) / len(log)
@@ -108,11 +107,15 @@ def calculate_performance(log):
     high_value_count = sum(1 for entry in log if entry["actual"] > 100.0)
     low_value_count = sum(1 for entry in log if entry["actual"] <= 100.0)
     
+    # Collect predicted vs. actual pairs (last 250 for memory, optional for /performance)
+    predicted_actual = [(entry["predicted"], entry["actual"]) for entry in log[-250:]]
+    
     return {
         "mae": float(mae),
         "within_one_percent": float(within_one),
         "high_value_count": high_value_count,
-        "low_value_count": low_value_count
+        "low_value_count": low_value_count,
+        "predicted_actual": predicted_actual
     }
 
 @app.route('/predict', methods=['POST'])
@@ -125,12 +128,11 @@ def predict_and_train():
         return jsonify({'error': f'Sequence must be at least {min_seq_length} numbers'}), 400
 
     seq_length = min(array_length, max_seq_length)
-    sequence = data[-seq_length:]  # Last 25 elements
+    sequence = data[-seq_length:]
 
     data_buffer.extend(data)
-    # Dynamic normalization with cap for stability, initially 100.0, up to 300.0 for rare >100 values
     data_min = min(data_min, min(data))
-    data_max = min(max(data_max, max(data)), 300.0)  # Cap at 300.0 to handle rare >100 values
+    data_max = min(max(data_max, max(data)), 300.0)
 
     seq_normalized = [(x - data_min) / (data_max - data_min) for x in sequence]
     seq_tensor = torch.FloatTensor(seq_normalized).view(1, seq_length, 1)
@@ -138,7 +140,7 @@ def predict_and_train():
     with torch.no_grad():
         pred_normalized = model(seq_tensor).item()
     pred = pred_normalized * (data_max - data_min) + data_min
-    pred = max(1.0, min(100.0, pred))  # Clamp predictions to 1.0–100.0 for 94.5%+ of data
+    pred = max(1.0, min(100.0, pred))
 
     loss = None
     if last_sequence is not None and len(data) > len(last_sequence):
@@ -163,7 +165,6 @@ def predict_and_train():
             print(f'Saved model to persistent disk after {request_count} requests')
             request_count = 0
 
-        # Append loss to history and cap at 1000 entries
         loss_history.append(float(loss.item()))
         if len(loss_history) > 1000:
             loss_history = loss_history[-1000:]
@@ -174,10 +175,9 @@ def predict_and_train():
         except (IOError, json.JSONEncodeError) as e:
             print(f"Error saving loss history: {e}")
 
-        # Update training log
         training_log.append({
-            'sequence': sequence,  # Last 25 elements
-            'predicted': float(pred),  # Convert to float for JSON
+            'sequence': sequence,
+            'predicted': float(pred),
             'actual': float(actual)
         })
         try:
@@ -190,12 +190,10 @@ def predict_and_train():
             with open(TRAINING_LOG_PATH, 'w') as f:
                 json.dump(training_log, f)
 
-        # Log high values for monitoring (>100.0, but capped at 100.0 in prediction)
         if actual > 100.0:
             print(f"High value detected - Actual: {actual:.4f}, Predicted: {pred:.4f}")
 
-        print(
-            f'Trained - Seq Length: {last_seq_length}, Predicted: {pred:.4f}, Actual: {actual:.4f}, Loss: {loss.item():.4f}')
+        print(f'Trained - Seq Length: {last_seq_length}, Predicted: {pred:.4f}, Actual: {actual:.4f}, Loss: {loss.item():.4f}')
 
     last_sequence = data.copy()
     return jsonify({'prediction': pred, 'loss': loss.item() if loss is not None else None})
@@ -204,16 +202,27 @@ def predict_and_train():
 def get_performance():
     global training_log, loss_history
     
-    # Calculate performance metrics from training log
     performance = calculate_performance(training_log)
-    
-    # Return performance metrics and learning curve (last 1000 losses or all if fewer)
     response = {
         "performance": performance,
-        "learning_curve": loss_history  # Capped at 1000 entries for memory
+        "learning_curve": loss_history
     }
-    
     return jsonify(response)
+
+@app.route('/training-log', methods=['GET'])
+def get_training_log():
+    if os.path.exists(TRAINING_LOG_PATH):
+        try:
+            with open(TRAINING_LOG_PATH, 'r') as f:
+                log_data = json.load(f)
+            if not log_data:
+                return jsonify({'error': 'Training log is empty'}), 404
+            return jsonify(log_data)
+        except (IOError, json.JSONDecodeError) as e:
+            print(f"Error reading training log: {e}")
+            return jsonify({'error': 'Failed to read training log'}), 500
+    else:
+        return jsonify({'error': 'Training log not found'}), 404
 
 @app.route('/')
 def serve_index():
@@ -248,11 +257,8 @@ def upload_model():
     if file.filename != 'best_lstm_model.pth':
         return jsonify({'error': 'Invalid file name'}), 400
     
-    # Overwrite any existing model on the persistent disk
     file.save(MODEL_PATH)
     print(f"Overwrote existing model with uploaded best_lstm_model.pth at {MODEL_PATH}")
-    
-    # Reload the model to ensure compatibility (optional, for immediate use)
     try:
         model.load_state_dict(torch.load(MODEL_PATH))
         print("Reloaded model from uploaded file")
@@ -264,10 +270,9 @@ def upload_model():
 @app.route('/delete-log', methods=['DELETE'])
 def delete_log():
     global training_log
-
     if os.path.exists(TRAINING_LOG_PATH):
         os.remove(TRAINING_LOG_PATH)
-        training_log = []  # Reset training_log to empty list
+        training_log = []
         print("Training log deleted successfully")
         return jsonify({'message': 'Training log deleted successfully'}), 200
     else:
@@ -276,10 +281,9 @@ def delete_log():
 @app.route('/delete-loss-history', methods=['DELETE'])
 def delete_loss_history():
     global loss_history
-
     if os.path.exists(LOSS_HISTORY_PATH):
         os.remove(LOSS_HISTORY_PATH)
-        loss_history = []  # Reset loss_history to empty list
+        loss_history = []
         print("Loss history deleted successfully")
         return jsonify({'message': 'Loss history deleted successfully'}), 200
     else:
@@ -290,11 +294,12 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=port)
 
 # Summary of Endpoints:
-# / (GET): Serves the static index.html for visualization.
+# / (GET): Serves the static index.html for visualization, loading charts for performance metrics, learning curve, and predicted vs. actual payouts.
 # /predict (POST): Receives a sequence of numbers, predicts the next value, trains the model if the sequence extends the last one,
 #                  returns a JSON with the prediction and loss (if trained). Saves model every 10 training steps to persistent disk
 #                  and logs predicted/actual values to training_log.json and loss to loss_history.json.
 # /performance (GET): Returns JSON with performance metrics (MAE, % within ±1.0, high/low value counts) and learning curve (loss history).
+# /training-log (GET): Returns JSON of the training_log.json file from persistent disk, containing sequence, predicted, and actual values for visualization.
 # /download-model (GET): Downloads the trained model file (best_lstm_model.pth) from the persistent disk if it exists,
 #                       returns a JSON error if not found.
 # /download-log (GET): Downloads the training log file (training_log.json) containing sequence, predicted, and actual values,

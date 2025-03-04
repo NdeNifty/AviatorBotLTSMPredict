@@ -2,7 +2,7 @@
 const BASE_URL = 'https://aviatorbotltsmpredict.onrender.com';
 
 // Chart.js instances
-let performanceChart, learningCurveChart, predictedActualChart;  // Add predictedActualChart
+let performanceChart, learningCurveChart, predictedActualChart;
 
 async function fetchPerformance() {
     try {
@@ -13,6 +13,18 @@ async function fetchPerformance() {
     } catch (error) {
         console.error('Error fetching performance:', error);
         return null;
+    }
+}
+
+async function fetchTrainingLog() {
+    try {
+        const response = await fetch(`${BASE_URL}/training-log`);
+        if (!response.ok) throw new Error('Network response was not ok');
+        const logData = await response.json();
+        return logData;
+    } catch (error) {
+        console.error('Error fetching training log:', error);
+        return [];
     }
 }
 
@@ -29,8 +41,8 @@ function updateCharts(data) {
                 datasets: [{
                     label: 'Performance Metrics',
                     data: [data.performance.mae, data.performance.within_one_percent],
-                    backgroundColor: ['rgba(75, 192, 192, 0.2)', 'rgba(255, 99, 132, 0.2)'],
-                    borderColor: ['rgba(75, 192, 192, 1)', 'rgba(255, 99, 132, 1)'],
+                    backgroundColor: ['rgba(75, 192, 192, 0.2)', 'rgba(75, 192, 192, 0.2)'],  // Both blue as requested
+                    borderColor: ['rgba(75, 192, 192, 1)', 'rgba(75, 192, 192, 1)'],
                     borderWidth: 1
                 }]
             },
@@ -61,7 +73,7 @@ function updateCharts(data) {
                 datasets: [{
                     label: 'Loss History',
                     data: data.learning_curve,
-                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderColor: 'rgba(54, 162, 235, 1)',  // Blue for consistency
                     backgroundColor: 'rgba(54, 162, 235, 0.2)',
                     fill: true
                 }]
@@ -82,46 +94,51 @@ function updateCharts(data) {
         learningCurveChart.update();
     }
 
-    // Predicted vs. Actual (Line Chart) - New Chart
-    if (!predictedActualChart) {
-        const ctxPredictedActual = document.getElementById('predictedActualChart').getContext('2d');
-        predictedActualChart = new Chart(ctxPredictedActual, {
-            type: 'line',
-            data: {
-                labels: Array.from({ length: data.performance.predicted_actual.length }, (_, i) => i + 1),
-                datasets: [
-                    {
-                        label: 'Predicted',
-                        data: data.performance.predicted_actual.map(pair => pair[0]),  // Predicted values
-                        borderColor: 'rgba(255, 99, 132, 1)',  // Red for predicted (default, we'll change later)
-                        backgroundColor: 'rgba(255, 99, 132, 0.2)',
-                        fill: false
-                    },
-                    {
-                        label: 'Actual',
-                        data: data.performance.predicted_actual.map(pair => pair[1]),  // Actual values
-                        borderColor: 'rgba(75, 192, 192, 1)',  // Green for actual (default)
-                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                        fill: false
-                    }
-                ]
-            },
-            options: {
-                scales: {
-                    x: { title: { display: true, text: 'Prediction Index' } },
-                    y: { title: { display: true, text: 'Payout Value' } }
+    // Predicted vs. Actual (Line Chart) - Using training_log.json data
+    fetchTrainingLog().then(logData => {
+        if (!predictedActualChart && logData.length > 0) {
+            const ctxPredictedActual = document.getElementById('predictedActualChart').getContext('2d');
+            predictedActualChart = new Chart(ctxPredictedActual, {
+                type: 'line',
+                data: {
+                    labels: Array.from({ length: logData.length }, (_, i) => i + 1),
+                    datasets: [
+                        {
+                            label: 'Predicted',
+                            data: logData.map(entry => entry.predicted || 0),  // Use predicted values, default to 0 if null
+                            borderColor: 'rgba(255, 99, 132, 1)',  // Red for predicted
+                            backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                            fill: false,
+                            tension: 0.1  // Smooth lines for better visualization
+                        },
+                        {
+                            label: 'Actual',
+                            data: logData.map(entry => entry.actual || 0),  // Use actual values, default to 0 if null
+                            borderColor: 'rgba(75, 192, 192, 1)',  // Green for actual
+                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                            fill: false,
+                            tension: 0.1  // Smooth lines
+                        }
+                    ]
                 },
-                plugins: {
-                    title: { display: true, text: 'Predicted vs. Actual Payouts' }
+                options: {
+                    scales: {
+                        x: { title: { display: true, text: 'Prediction Index' } },
+                        y: { title: { display: true, text: 'Payout Value' }, beginAtZero: true }
+                    },
+                    plugins: {
+                        title: { display: true, text: 'Predicted vs. Actual Payouts' }
+                    },
+                    maintainAspectRatio: false  // Allow chart to resize with CSS
                 }
-            }
-        });
-    } else {
-        predictedActualChart.data.labels = Array.from({ length: data.performance.predicted_actual.length }, (_, i) => i + 1);
-        predictedActualChart.data.datasets[0].data = data.performance.predicted_actual.map(pair => pair[0]);
-        predictedActualChart.data.datasets[1].data = data.performance.predicted_actual.map(pair => pair[1]);
-        predictedActualChart.update();
-    }
+            });
+        } else if (predictedActualChart && logData.length > 0) {
+            predictedActualChart.data.labels = Array.from({ length: logData.length }, (_, i) => i + 1);
+            predictedActualChart.data.datasets[0].data = logData.map(entry => entry.predicted || 0);
+            predictedActualChart.data.datasets[1].data = logData.map(entry => entry.actual || 0);
+            predictedActualChart.update();
+        }
+    }).catch(error => console.error('Error updating predicted vs. actual chart:', error));
 }
 
 async function updatePeriodically() {
@@ -130,5 +147,4 @@ async function updatePeriodically() {
     setTimeout(updatePeriodically, 30000); // Update every 30 seconds
 }
 
-// Start periodic updates when the page loads
 document.addEventListener('DOMContentLoaded', updatePeriodically);
