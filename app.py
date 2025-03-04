@@ -40,7 +40,7 @@ except FileNotFoundError:
 
 model.train()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-criterion = nn.HuberLoss(delta=5.0)  # Huber Loss for outlier robustness, delta=5.0 for >100 values
+criterion = nn.HuberLoss(delta=3.0)  # Huber Loss for outlier robustness, delta=3.0 for >100 values
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5, verbose=True)
 
 # Configuration

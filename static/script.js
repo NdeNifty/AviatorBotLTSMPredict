@@ -2,7 +2,7 @@
 const BASE_URL = 'https://aviatorbotltsmpredict.onrender.com';
 
 // Chart.js instances
-let performanceChart, learningCurveChart;
+let performanceChart, learningCurveChart, predictedActualChart;  // Add predictedActualChart
 
 async function fetchPerformance() {
     try {
@@ -80,6 +80,47 @@ function updateCharts(data) {
         learningCurveChart.data.labels = Array.from({ length: data.learning_curve.length }, (_, i) => i + 1);
         learningCurveChart.data.datasets[0].data = data.learning_curve;
         learningCurveChart.update();
+    }
+
+    // Predicted vs. Actual (Line Chart) - New Chart
+    if (!predictedActualChart) {
+        const ctxPredictedActual = document.getElementById('predictedActualChart').getContext('2d');
+        predictedActualChart = new Chart(ctxPredictedActual, {
+            type: 'line',
+            data: {
+                labels: Array.from({ length: data.performance.predicted_actual.length }, (_, i) => i + 1),
+                datasets: [
+                    {
+                        label: 'Predicted',
+                        data: data.performance.predicted_actual.map(pair => pair[0]),  // Predicted values
+                        borderColor: 'rgba(255, 99, 132, 1)',  // Red for predicted (default, we'll change later)
+                        backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                        fill: false
+                    },
+                    {
+                        label: 'Actual',
+                        data: data.performance.predicted_actual.map(pair => pair[1]),  // Actual values
+                        borderColor: 'rgba(75, 192, 192, 1)',  // Green for actual (default)
+                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                scales: {
+                    x: { title: { display: true, text: 'Prediction Index' } },
+                    y: { title: { display: true, text: 'Payout Value' } }
+                },
+                plugins: {
+                    title: { display: true, text: 'Predicted vs. Actual Payouts' }
+                }
+            }
+        });
+    } else {
+        predictedActualChart.data.labels = Array.from({ length: data.performance.predicted_actual.length }, (_, i) => i + 1);
+        predictedActualChart.data.datasets[0].data = data.performance.predicted_actual.map(pair => pair[0]);
+        predictedActualChart.data.datasets[1].data = data.performance.predicted_actual.map(pair => pair[1]);
+        predictedActualChart.update();
     }
 }
 
