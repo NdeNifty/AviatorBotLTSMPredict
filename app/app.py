@@ -1,54 +1,86 @@
-# app/app.py
-import os
-from flask import Flask, request, jsonify, send_file
+# app.py
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import torch
+from .data_utils import initialize_model, data_buffer, data_min, data_max, last_sequence, max_seq_length, training_queue, TRAINING_QUEUE_PATH
+from .training_utils import train_model, get_performance_metrics, get_training_log, assign_safety_label, assign_rtp_window
+import os
+import json
 from datetime import datetime
+import threading
+import time
 
-# Import necessary utilities
-from .data_utils import initialize_model, load_or_init_training_log, load_or_init_loss_history, calculate_performance, MODEL_PATH
-
-# Initialize model and data first
-initialize_model()
-
-# Now import training_utils and initialize its components
-from .training_utils import training_queue, model, assign_safety_label, assign_rtp_window, initialize_training_utils
-initialize_training_utils()
-
-app = Flask(__name__, static_folder='static')
+app = Flask(__name__)
 CORS(app, resources={r"/performance": {"origins": "https://aviatorbotltsmpredict.onrender.com"}, r"/training-log": {"origins": "https://aviatorbotltsmpredict.onrender.com"}})
 
-training_log = load_or_init_training_log()
-loss_history = load_or_init_loss_history()
+# Initialize device for GPU support
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 
+# Initialize model with GPU support
+initialize_model()  # This will now use GPU if available (updated in data_utils.py)
+
+# Start training thread (if not already running)
+training_thread = None
+if not hasattr(app, 'training_thread_running') or not app.training_thread_running:
+    def start_training():
+        global training_thread
+        while True:
+            try:
+                if not training_queue.empty():
+                    data = training_queue.get()
+                    train_model(data['loggingData'])
+                else:
+                    time.sleep(1)  # Avoid busy waiting
+            except Exception as e:
+                print(f"Error in training thread: {e}")
+
+    training_thread = threading.Thread(target=start_training, daemon=True)
+    training_thread.start()
+    app.training_thread_running = True
+
+# Route to predict the next multiplier
 @app.route('/predict', methods=['POST'])
 def predict():
     global model
     from .data_utils import data_buffer, data_min, data_max, last_sequence, max_seq_length
     
-    sequence = request.json.get('predictionData', {}).get('Last_30_Multipliers', [])
-    if not sequence or len(sequence) < 10:
-        return jsonify({'error': 'Sequence must be at least 10 numbers'}), 400
+    prediction_data = request.json.get('predictionData', {})
+    sequence = prediction_data.get('Last_30_Multipliers', [])
+    time_gaps = prediction_data.get('Time_Gaps', None)  # Optional
 
+    if not sequence:
+        return jsonify({'error': 'No sequence provided'}), 400
+
+    # Log Time_Gaps for future use
+    if time_gaps is not None:
+        print(f"Received Time_Gaps: {time_gaps}")
+    else:
+        print("No Time_Gaps provided")
+
+    # Pad sequence with default value (1.0) if less than 10
     seq_length = min(len(sequence), max_seq_length)
-    sequence = sequence[-seq_length:]
+    padded_sequence = sequence[-seq_length:]
+    while len(padded_sequence) < 10:
+        padded_sequence.insert(0, 1.0)  # Pad with 1.0 at the beginning
     
-    data_buffer.extend(sequence)
-    data_min = min(data_min, min(sequence))
-    data_max = min(max(data_max, max(sequence)), 300.0)
+    data_buffer.extend(padded_sequence)
+    data_min = min(data_min, min(padded_sequence))
+    data_max = min(max(data_max, max(padded_sequence)), 300.0)
 
-    seq_normalized = [(x - data_min) / (data_max - data_min) for x in sequence]
-    seq_tensor = torch.FloatTensor(seq_normalized).unsqueeze(0).unsqueeze(0)
+    seq_normalized = [(x - data_min) / (data_max - data_min) for x in padded_sequence]
+    seq_tensor = torch.FloatTensor(seq_normalized).unsqueeze(0).unsqueeze(0).to(device)
 
     with torch.no_grad():
         model.eval()
+        model.to(device)  # Ensure model is on the correct device
         outputs = model(seq_tensor)
         predicted_multiplier = outputs['predicted_multiplier'].item()
         confidence_score = outputs['confidence_score'].item()
         classifier_out = outputs['classifier_output']
         
         safety_label = assign_safety_label(confidence_score, predicted_multiplier)
-        rtp_window = assign_rtp_window(sequence)
+        rtp_window = assign_rtp_window(padded_sequence)
         
         response = {
             'predicted_multiplier': float(predicted_multiplier),
@@ -58,6 +90,47 @@ def predict():
         }
         return jsonify(response)
 
+# Route to delete the model file
+@app.route('/delete-model', methods=['DELETE'])
+def delete_model():
+    from .data_utils import MODEL_PATH
+    try:
+        if os.path.exists(MODEL_PATH):
+            os.remove(MODEL_PATH)
+            print("Model file deleted successfully")
+            return jsonify({'message': 'Model file deleted successfully'})
+        else:
+            print("Model file not found")
+            return jsonify({'error': 'Model file not found'}), 404
+    except Exception as e:
+        print(f"Error deleting model file: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# Route to upload a new model
+@app.route('/upload-model', methods=['POST'])
+def upload_model():
+    from .data_utils import MODEL_PATH
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+    if file and file.filename.endswith('.pth'):
+        try:
+            file.save(MODEL_PATH)
+            state_dict = torch.load(MODEL_PATH, map_location=device)
+            from .model import HybridCNNLSTMModel
+            global model
+            model = HybridCNNLSTMModel(max_seq_length=max_seq_length).to(device)  # Move to GPU
+            model.load_state_dict(state_dict, strict=False)
+            print("Model uploaded and loaded successfully")
+            return jsonify({'message': 'Model uploaded successfully'})
+        except Exception as e:
+            print(f"Error uploading model: {e}")
+            return jsonify({'error': str(e)}), 500
+    return jsonify({'error': 'Invalid file format'}), 400
+
+# Route to train the model with new data
 @app.route('/train', methods=['POST'])
 def train():
     global training_queue
@@ -76,157 +149,20 @@ def train():
 
     return jsonify({'message': 'Data queued for training'})
 
+# Route to get performance metrics
 @app.route('/performance', methods=['GET'])
-def get_performance():
-    from .data_utils import calculate_performance, training_log, loss_history
-    performance = calculate_performance(training_log)
-    response = {
-        "performance": performance,
-        "learning_curve": loss_history
-    }
-    return jsonify(response)
+def performance():
+    metrics = get_performance_metrics()
+    return jsonify(metrics)
 
+# Route to get training log
 @app.route('/training-log', methods=['GET'])
-def get_training_log():
-    from .data_utils import TRAINING_LOG_PATH
-    if os.path.exists(TRAINING_LOG_PATH):
-        try:
-            with open(TRAINING_LOG_PATH, 'r') as f:
-                log_data = json.load(f)
-            if not log_data:
-                return jsonify({'error': 'Training log is empty'}), 404
-            return jsonify(log_data)
-        except (IOError, json.JSONEncodeError) as e:
-            print(f"Error reading training log: {e}")
-            return jsonify({'error': 'Failed to read training log'}), 500
-    else:
-        return jsonify({'error': 'Training log not found'}), 404
-
-@app.route('/')
-def serve_index():
-    return app.send_static_file('index.html')
-
-@app.route('/download-model', methods=['GET'])
-def download_model():
-    from .data_utils import MODEL_PATH
-    if os.path.exists(MODEL_PATH):
-        return send_file(MODEL_PATH, as_attachment=True, download_name='best_lstm_model.pth')
-    else:
-        return jsonify({'error': 'Model file not found. Train the model first.'}), 404
-
-@app.route('/download-log', methods=['GET'])
-def download_log():
-    from .data_utils import TRAINING_LOG_PATH
-    if os.path.exists(TRAINING_LOG_PATH):
-        return send_file(TRAINING_LOG_PATH, as_attachment=True, download_name='training_log.json')
-    else:
-        return jsonify({'error': 'Training log not found. Train the model first.'}), 404
-
-@app.route('/download-loss-history', methods=['GET'])
-def download_loss_history():
-    from .data_utils import LOSS_HISTORY_PATH
-    if os.path.exists(LOSS_HISTORY_PATH):
-        return send_file(LOSS_HISTORY_PATH, as_attachment=True, download_name='loss_history.json')
-    else:
-        return jsonify({'error': 'Loss history not found. Train the model first.'}), 404
-
-@app.route('/download-stage2-log', methods=['GET'])
-def download_stage2_log():
-    from .data_utils import STAGE2_LOG_PATH
-    if os.path.exists(STAGE2_LOG_PATH):
-        return send_file(STAGE2_LOG_PATH, as_attachment=True, download_name='stage2_log.json')
-    else:
-        return jsonify({'error': 'Stage 2 log not found.'}), 404
-
-@app.route('/download-prediction-outcome-log', methods=['GET'])
-def download_prediction_outcome_log():
-    from .data_utils import PREDICTION_OUTCOME_LOG_PATH
-    if os.path.exists(PREDICTION_OUTCOME_LOG_PATH):
-        return send_file(PREDICTION_OUTCOME_LOG_PATH, as_attachment=True, download_name='prediction_outcome_log.json')
-    else:
-        return jsonify({'error': 'Prediction outcome log not found.'}), 404
-
-@app.route('/upload-model', methods=['POST'])
-def upload_model():
-    from .data_utils import MODEL_PATH, model
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part'}), 400
-    file = request.files['file']
-    if file.filename != 'best_lstm_model.pth':
-        return jsonify({'error': 'Invalid file name'}), 400
-    
-    file.save(MODEL_PATH)
-    print(f"Overwrote existing model with uploaded best_lstm_model.pth at {MODEL_PATH}")
-    try:
-        model.load_state_dict(torch.load(MODEL_PATH))
-        print("Reloaded model from uploaded file")
-    except RuntimeError as e:
-        return jsonify({'error': f'Failed to load uploaded model: {e}'}), 500
-    
-    return jsonify({'message': 'Model successfully uploaded and overwrote existing model'})
-
-@app.route('/delete-log', methods=['DELETE'])
-def delete_log():
-    from .data_utils import training_log, TRAINING_LOG_PATH
-    if os.path.exists(TRAINING_LOG_PATH):
-        os.remove(TRAINING_LOG_PATH)
-        training_log.clear()
-        print("Training log deleted successfully")
-        return jsonify({'message': 'Training log deleted successfully'}), 200
-    else:
-        return jsonify({'error': 'Training log not found'}), 404
-
-@app.route('/delete-loss-history', methods=['DELETE'])
-def delete_loss_history():
-    from .data_utils import loss_history, LOSS_HISTORY_PATH
-    if os.path.exists(LOSS_HISTORY_PATH):
-        os.remove(LOSS_HISTORY_PATH)
-        loss_history.clear()
-        print("Loss history deleted successfully")
-        return jsonify({'message': 'Loss history deleted successfully'}), 200
-    else:
-        return jsonify({'error': 'Loss history not found'}), 404
-
-@app.route('/delete-stage2-log', methods=['DELETE'])
-def delete_stage2_log():
-    from .data_utils import stage2_log, STAGE2_LOG_PATH
-    if os.path.exists(STAGE2_LOG_PATH):
-        os.remove(STAGE2_LOG_PATH)
-        stage2_log.clear()
-        print("Stage 2 log deleted successfully")
-        return jsonify({'message': 'Stage 2 log deleted successfully'}), 200
-    else:
-        return jsonify({'error': 'Stage 2 log not found'}), 404
-
-@app.route('/delete-prediction-outcome-log', methods=['DELETE'])
-def delete_prediction_outcome_log():
-    from .data_utils import prediction_outcome_log, PREDICTION_OUTCOME_LOG_PATH
-    if os.path.exists(PREDICTION_OUTCOME_LOG_PATH):
-        os.remove(PREDICTION_OUTCOME_LOG_PATH)
-        prediction_outcome_log.clear()
-        print("Prediction outcome log deleted successfully")
-        return jsonify({'message': 'Prediction outcome log deleted successfully'}), 200
-    else:
-        return jsonify({'error': 'Prediction outcome log not found'}), 404
-
-@app.route('/delete-model', methods=['DELETE'])
-def delete_model():
-    global model
-    from .data_utils import MODEL_PATH
-    if os.path.exists(MODEL_PATH):
-        os.remove(MODEL_PATH)
-        # Reset the global model to None to force reinitialization
-        model = None
-        print("Model file deleted successfully")
-        return jsonify({'message': 'Model file deleted successfully'}), 200
-    else:
-        return jsonify({'error': 'Model file not found'}), 404
+def training_log():
+    log = get_training_log()
+    return jsonify(log)
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    print(f"Starting Flask on port {port}")
-    app.run(host='0.0.0.0', port=port)
-
+    app.run(debug=True, host='0.0.0.0', port=5000)
 # Summary of Endpoints:
 # / (GET): Serves the static index.html for visualization, loading charts for performance metrics, learning curve, and predicted vs. actual payouts.
 # /predict (POST): Receives prediction data (Last_30_Multipliers, etc.), predicts the next value using a hybrid CNN-LSTM model, assigns safety_label and RTP_window,
