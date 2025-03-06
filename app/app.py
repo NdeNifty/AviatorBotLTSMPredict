@@ -1,24 +1,40 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import torch
-from .data_utils import initialize_model, data_buffer, data_min, data_max, last_sequence, max_seq_length, training_queue, TRAINING_QUEUE_PATH
-from .training_utils import assign_safety_label, assign_rtp_window  # Removed get_performance_metrics, get_training_log
+from .data_utils import initialize_model, data_buffer, data_min, data_max, last_sequence, max_seq_length, training_queue, TRAINING_QUEUE_PATH, model
+from .training_utils import assign_safety_label, assign_rtp_window, initialize_training_utils, training_loop
 import os
 import json
 from datetime import datetime
 import time
+import threading
 
 app = Flask(__name__)
-CORS(app)  # Simplified CORS since /performance and /training-log are removed
+CORS(app)
 
 # Initialize device for GPU support
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # Initialize model with GPU support
-initialize_model()  # This will now use GPU if available (updated in data_utils.py)
+print("Calling initialize_model()")
+initialized_model = initialize_model()
 
-# Note: The training loop is already started in training_utils.py, so no additional thread is needed here
+# Debug model state before proceeding
+print(f"Model after initialize_model: {initialized_model}")
+if initialized_model is None:
+    raise ValueError("Model initialization failed")
+
+# Assign the initialized model to the global model variable
+global model
+model = initialized_model
+
+# Initialize training utilities after model is confirmed
+initialize_training_utils(model)
+
+# Start the training thread with the initialized model
+training_thread = threading.Thread(target=training_loop, args=(model,), daemon=True)
+training_thread.start()
 
 # Route to predict the next multiplier
 @app.route('/predict', methods=['POST'])
@@ -28,22 +44,20 @@ def predict():
     
     prediction_data = request.json.get('predictionData', {})
     sequence = prediction_data.get('Last_30_Multipliers', [])
-    time_gaps = prediction_data.get('Time_Gaps', None)  # Optional
+    time_gaps = prediction_data.get('Time_Gaps', None)
 
     if not sequence:
         return jsonify({'error': 'No sequence provided'}), 400
 
-    # Log Time_Gaps for future use
     if time_gaps is not None:
         print(f"Received Time_Gaps: {time_gaps}")
     else:
         print("No Time_Gaps provided")
 
-    # Pad sequence with default value (1.0) if less than 10
     seq_length = min(len(sequence), max_seq_length)
     padded_sequence = sequence[-seq_length:]
     while len(padded_sequence) < 10:
-        padded_sequence.insert(0, 1.0)  # Pad with 1.0 at the beginning
+        padded_sequence.insert(0, 1.0)
     
     data_buffer.extend(padded_sequence)
     data_min = min(data_min, min(padded_sequence))
@@ -54,13 +68,13 @@ def predict():
 
     with torch.no_grad():
         model.eval()
-        model.to(device)  # Ensure model is on the correct device
+        model.to(device)
         outputs = model(seq_tensor)
         predicted_multiplier = outputs['predicted_multiplier'].item()
         confidence_score = outputs['confidence_score'].item()
         classifier_out = outputs['classifier_output']
         
-        safety_label = assign_safety_label(confidence_score * 100, predicted_multiplier)  # Convert to percentage for your logic
+        safety_label = assign_safety_label(confidence_score * 100, predicted_multiplier)
         rtp_window = assign_rtp_window(padded_sequence)
         
         response = {
@@ -102,7 +116,7 @@ def upload_model():
             state_dict = torch.load(MODEL_PATH, map_location=device)
             from .model import HybridCNNLSTMModel
             global model
-            model = HybridCNNLSTMModel(max_seq_length=max_seq_length).to(device)  # Move to GPU
+            model = HybridCNNLSTMModel(max_seq_length=max_seq_length).to(device)
             model.load_state_dict(state_dict, strict=False)
             print("Model uploaded and loaded successfully")
             return jsonify({'message': 'Model uploaded successfully'})
@@ -120,9 +134,8 @@ def train():
     if not data:
         return jsonify({'error': 'No logging data provided'}), 400
 
-    # Add actual multiplier if not provided (assuming prediction outcome)
     if 'Actual_Multiplier' not in data:
-        data['Actual_Multiplier'] = data.get('Multiplier_Outcome', 1.0)  # Fallback to latest multiplier
+        data['Actual_Multiplier'] = data.get('Multiplier_Outcome', 1.0)
 
     training_queue.put({'loggingData': data, 'timestamp': datetime.utcnow().isoformat()})
     try:
@@ -134,18 +147,7 @@ def train():
 
     return jsonify({'message': 'Data queued for training'})
 
-# Note: /performance and /training-log endpoints are commented out due to missing functions
-# @app.route('/performance', methods=['GET'])
-# def performance():
-#     metrics = get_performance_metrics()
-#     return jsonify(metrics)
-
-# @app.route('/training-log', methods=['GET'])
-# def training_log():
-#     log = get_training_log()
-#     return jsonify(log)
-
-# Placeholder for unimplemented endpoints from the summary (to be implemented if needed)
+# Placeholder for unimplemented endpoints from the summary
 # @app.route('/', methods=['GET'])
 # def serve_index():
 #     return app.send_static_file('index.html')
@@ -188,12 +190,3 @@ def train():
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
-
-# Summary of Current Endpoints:
-# /predict (POST): Receives prediction data (Last_30_Multipliers, etc.), predicts the next value using a hybrid CNN-LSTM model,
-#                  assigns safety_label and RTP_window, returns a JSON with predicted_multiplier, confidence_score, safety_label, and RTP_window.
-# /train (POST): Receives logging data (Skipped_or_Played, Your_Bet_Size, etc.), queues it for asynchronous training,
-#                returns a JSON success message or error if data is invalid.
-# /delete-model (DELETE): Deletes the model file (best_lstm_model.pth) if it exists, returns a JSON success or error message.
-# /upload-model (POST): Uploads a new best_lstm_model.pth file, returns a JSON success message or error if invalid.
-# (Other endpoints from the original summary are commented out and need implementation if required.)

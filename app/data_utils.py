@@ -4,8 +4,11 @@ import queue
 from statistics import mean, stdev
 import torch
 
-# Define paths relative to the project directory
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Define BASE_DIR based on persistent disk (update if mounted, e.g., '/data')
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Default to project dir
+# If using a persistent disk mounted at /data, uncomment and set:
+# BASE_DIR = '/data'
+
 MODEL_PATH = os.path.join(BASE_DIR, 'model', 'best_lstm_model.pth')
 TRAINING_LOG_PATH = os.path.join(BASE_DIR, 'model', 'training_log.json')
 LOSS_HISTORY_PATH = os.path.join(BASE_DIR, 'model', 'loss_history.json')
@@ -14,7 +17,7 @@ PREDICTION_OUTCOME_LOG_PATH = os.path.join(BASE_DIR, 'model', 'prediction_outcom
 TRAINING_QUEUE_PATH = os.path.join(BASE_DIR, 'model', 'training_queue.json')
 
 # Ensure the model directory exists
-os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+os.makedirs(os.path.join(BASE_DIR, 'model'), exist_ok=True)
 
 # Global variables and constants
 save_interval = 10
@@ -37,7 +40,16 @@ def initialize_model():
     from .model import HybridCNNLSTMModel
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device in initialize_model: {device}")
-    model = HybridCNNLSTMModel(max_seq_length=max_seq_length).to(device)
+    
+    # Create the model instance
+    try:
+        model = HybridCNNLSTMModel(max_seq_length=max_seq_length).to(device)
+        print(f"Model created successfully: {model}")
+    except Exception as e:
+        print(f"Error creating model: {e}")
+        return None
+
+    # Attempt to load from persistent disk
     try:
         state_dict = torch.load(MODEL_PATH, map_location=device)
         model.load_state_dict(state_dict, strict=False)
@@ -50,8 +62,7 @@ def initialize_model():
             torch.save(model.state_dict(), MODEL_PATH)
         except (FileNotFoundError, RuntimeError) as e:
             print(f"Failed to load model due to {e}. Starting with a fresh model")
-
-# Initialize training utils after model is loaded
-from .training_utils import initialize_training_utils
-initialize_model()
-initialize_training_utils()
+    
+    # Verify and return model
+    print(f"Model after initialization: {model}")
+    return model

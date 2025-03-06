@@ -6,7 +6,8 @@ import os
 import json
 from datetime import datetime
 from statistics import mean
-from .data_utils import model, training_log, loss_history, data_buffer, data_min, data_max, min_seq_length, max_seq_length, MODEL_PATH, TRAINING_LOG_PATH, LOSS_HISTORY_PATH, STAGE2_LOG_PATH, stage2_log, PREDICTION_OUTCOME_LOG_PATH, prediction_outcome_log, save_interval
+# Remove model from imports to avoid early binding
+from .data_utils import training_log, loss_history, data_buffer, data_min, data_max, min_seq_length, max_seq_length, MODEL_PATH, TRAINING_LOG_PATH, LOSS_HISTORY_PATH, STAGE2_LOG_PATH, stage2_log, PREDICTION_OUTCOME_LOG_PATH, prediction_outcome_log, save_interval
 
 # Define these as None initially, and initialize them later
 optimizer = None
@@ -17,7 +18,7 @@ training_queue = queue.Queue()
 BATCH_SIZE = 10
 VALIDATION_SPLIT = 0.2
 
-def initialize_training_utils():
+def initialize_training_utils(model):
     global optimizer, criterion, scheduler
     if model is None:
         raise ValueError("Model must be initialized before training_utils")
@@ -25,7 +26,8 @@ def initialize_training_utils():
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
     criterion = nn.HuberLoss(delta=3.0)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5, verbose=True)
-    model.to(device)  # Ensure model is on the correct device
+    model.to(device)
+    print("Training utilities initialized successfully")
 
 def load_or_init_training_queue():
     global training_queue
@@ -59,7 +61,7 @@ def assign_rtp_window(sequence):
     last_10 = sequence[-10:] if len(sequence) >= 10 else sequence
     return "Manipulated" if mean(last_10) < 2.0 else "Normal"
 
-def train_batch(queued_data):
+def train_batch(queued_data, model):
     global request_count
     if not queued_data:
         return
@@ -166,7 +168,7 @@ def train_batch(queued_data):
 
     print(f"Trained batch - Batch Size: {len(sequences)}, Loss: {total_loss.item():.4f}")
 
-def training_loop():
+def training_loop(model):
     global request_count
     while True:
         queued_data = []
@@ -174,7 +176,7 @@ def training_loop():
             queued_data.append(training_queue.get())
         
         if queued_data:
-            train_batch(queued_data)
+            train_batch(queued_data, model)
             for _ in queued_data:
                 training_queue.task_done()
         
@@ -182,13 +184,12 @@ def training_loop():
             val_size = int(len(training_log) * VALIDATION_SPLIT)
             train_data = training_log[:-val_size]
             val_data = training_log[-val_size:]
-            val_loss = calculate_validation_loss(val_data)
+            val_loss = calculate_validation_loss(val_data, model)
             print(f"Validation Loss: {val_loss:.4f}")
-            # Removed early stopping logic since previous_val_loss is not defined
         
         threading.Event().wait(60)
 
-def calculate_validation_loss(val_data):
+def calculate_validation_loss(val_data, model):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     sequences = [entry['sequence'] for entry in val_data]
     actuals = [entry['actual'] for entry in val_data]
@@ -201,6 +202,4 @@ def calculate_validation_loss(val_data):
         predicted_multipliers = outputs['predicted_multiplier']
         return criterion(predicted_multipliers, actual_tensor).item()
 
-# Start training thread
-training_thread = threading.Thread(target=training_loop, daemon=True)
-training_thread.start()
+# Start training thread with model passed later
