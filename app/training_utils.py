@@ -1,11 +1,11 @@
-# app/training_utils.py
 import torch
-import torch.nn as nn  # Add this import
+import torch.nn as nn
 import threading
 import queue
 import os
 import json
 from datetime import datetime
+from statistics import mean
 from .data_utils import model, training_log, loss_history, data_buffer, data_min, data_max, min_seq_length, max_seq_length, MODEL_PATH, TRAINING_LOG_PATH, LOSS_HISTORY_PATH, STAGE2_LOG_PATH, stage2_log, PREDICTION_OUTCOME_LOG_PATH, prediction_outcome_log, save_interval
 
 # Define these as None initially, and initialize them later
@@ -21,13 +21,15 @@ def initialize_training_utils():
     global optimizer, criterion, scheduler
     if model is None:
         raise ValueError("Model must be initialized before training_utils")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
     criterion = nn.HuberLoss(delta=3.0)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5, verbose=True)
+    model.to(device)  # Ensure model is on the correct device
 
 def load_or_init_training_queue():
     global training_queue
-    TRAINING_QUEUE_PATH = '/model/training_queue.json'
+    TRAINING_QUEUE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'model', 'training_queue.json')
     if os.path.exists(TRAINING_QUEUE_PATH):
         try:
             with open(TRAINING_QUEUE_PATH, 'r') as f:
@@ -62,6 +64,7 @@ def train_batch(queued_data):
     if not queued_data:
         return
     
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     sequences = []
     actual_multipliers = []
     for data in queued_data:
@@ -76,8 +79,8 @@ def train_batch(queued_data):
     if not sequences:
         return
 
-    seq_tensor = torch.stack([torch.FloatTensor([(x - data_min) / (data_max - data_min) for x in seq]).unsqueeze(0).unsqueeze(0) for seq in sequences])
-    actual_tensor = torch.FloatTensor(actual_multipliers).unsqueeze(1)
+    seq_tensor = torch.stack([torch.FloatTensor([(x - data_min) / (data_max - data_min) for x in seq]).unsqueeze(0).unsqueeze(0) for seq in sequences]).to(device)
+    actual_tensor = torch.FloatTensor(actual_multipliers).unsqueeze(1).to(device)
 
     model.train()
     outputs = model(seq_tensor)
@@ -87,7 +90,7 @@ def train_batch(queued_data):
 
     safety_labels = [assign_safety_label(confidence, pred) for confidence, pred in zip(confidence_scores.tolist(), predicted_multipliers.tolist())]
     rtp_windows = [assign_rtp_window(seq) for seq in sequences]
-    classifier_labels = torch.tensor([0 if label == "Safe" else 1 if label == "Danger" else 2 for label in safety_labels])
+    classifier_labels = torch.tensor([0 if label == "Safe" else 1 if label == "Danger" else 2 for label in safety_labels]).to(device)
 
     multiplier_loss = criterion(predicted_multipliers, actual_tensor)
     classifier_loss = nn.CrossEntropyLoss()(classifier_out, classifier_labels)
@@ -100,7 +103,7 @@ def train_batch(queued_data):
 
     loss_history.append(float(total_loss.item()))
     if len(loss_history) > 1000:
-        loss_history = loss_history[-1000:]
+        loss_history.pop(0)
     try:
         with open(LOSS_HISTORY_PATH, 'w') as f:
             json.dump(loss_history, f)
@@ -120,7 +123,7 @@ def train_batch(queued_data):
         print(f"Updated training log with {len(training_log)} entries")
     except (IOError, json.JSONEncodeError) as e:
         print(f"Error saving training log: {e}. Truncating log to last 1000 entries.")
-        training_log = training_log[-1000:]
+        training_log[:] = training_log[-1000:]
         with open(TRAINING_LOG_PATH, 'w') as f:
             json.dump(training_log, f)
 
@@ -132,7 +135,7 @@ def train_batch(queued_data):
         print(f"Updated stage2 log with {len(stage2_log)} entries")
     except (IOError, json.JSONEncodeError) as e:
         print(f"Error saving stage2 log: {e}. Truncating log to last 1000 entries.")
-        stage2_log = stage2_log[-1000:]
+        stage2_log[:] = stage2_log[-1000:]
         with open(STAGE2_LOG_PATH, 'w') as f:
             json.dump(stage2_log, f)
 
@@ -151,10 +154,11 @@ def train_batch(queued_data):
         print(f"Updated prediction outcome log with {len(prediction_outcome_log)} entries")
     except (IOError, json.JSONEncodeError) as e:
         print(f"Error saving prediction outcome log: {e}. Truncating log to last 1000 entries.")
-        prediction_outcome_log = prediction_outcome_log[-1000:]
+        prediction_outcome_log[:] = prediction_outcome_log[-1000:]
         with open(PREDICTION_OUTCOME_LOG_PATH, 'w') as f:
             json.dump(prediction_outcome_log, f)
 
+    request_count += 1
     if request_count >= save_interval:
         torch.save(model.state_dict(), MODEL_PATH)
         print(f'Saved model to persistent disk after {request_count} requests')
@@ -180,17 +184,16 @@ def training_loop():
             val_data = training_log[-val_size:]
             val_loss = calculate_validation_loss(val_data)
             print(f"Validation Loss: {val_loss:.4f}")
-            if val_loss > previous_val_loss:  # Needs tuning
-                print("Validation loss increased, considering early stopping")
-                break
+            # Removed early stopping logic since previous_val_loss is not defined
         
         threading.Event().wait(60)
 
 def calculate_validation_loss(val_data):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     sequences = [entry['sequence'] for entry in val_data]
     actuals = [entry['actual'] for entry in val_data]
-    seq_tensor = torch.stack([torch.FloatTensor([(x - data_min) / (data_max - data_min) for x in seq]).unsqueeze(0).unsqueeze(0) for seq in sequences])
-    actual_tensor = torch.FloatTensor(actuals).unsqueeze(1)
+    seq_tensor = torch.stack([torch.FloatTensor([(x - data_min) / (data_max - data_min) for x in seq]).unsqueeze(0).unsqueeze(0) for seq in sequences]).to(device)
+    actual_tensor = torch.FloatTensor(actuals).unsqueeze(1).to(device)
     
     with torch.no_grad():
         model.eval()

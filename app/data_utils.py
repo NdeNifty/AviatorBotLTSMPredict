@@ -1,6 +1,6 @@
 import os
 import json
-import queue  # Changed from collections.deque
+import queue
 from statistics import mean, stdev
 import torch
 
@@ -18,13 +18,13 @@ os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
 
 # Global variables and constants
 save_interval = 10
-training_queue = queue.Queue()  # Changed to queue.Queue
+training_queue = queue.Queue()
 
 # Global variables
 model = None
 training_log = []
 loss_history = []
-data_buffer = queue.Queue(maxsize=1000)  # Changed to queue.Queue for consistency
+data_buffer = queue.Queue(maxsize=1000)
 data_min, data_max = 1.0, 100.0
 last_sequence = None
 min_seq_length = 10
@@ -50,3 +50,8 @@ def initialize_model():
             torch.save(model.state_dict(), MODEL_PATH)
         except (FileNotFoundError, RuntimeError) as e:
             print(f"Failed to load model due to {e}. Starting with a fresh model")
+
+# Initialize training utils after model is loaded
+from .training_utils import initialize_training_utils
+initialize_model()
+initialize_training_utils()
