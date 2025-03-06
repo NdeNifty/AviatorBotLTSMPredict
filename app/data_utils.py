@@ -31,16 +31,17 @@ def initialize_model():
     global model
     from .model import HybridCNNLSTMModel
     model = HybridCNNLSTMModel(max_seq_length=max_seq_length)
-    try:
-        model.load_state_dict(torch.load(MODEL_PATH))
-        print("Loaded existing model from persistent disk")
-    except FileNotFoundError:
-        try:
-            model.load_state_dict(torch.load('best_lstm_model.pth'))
-            print("Loaded model from GitHub file, saving to persistent disk")
-            torch.save(model.state_dict(), MODEL_PATH)
-        except FileNotFoundError:
-            print("Starting with a fresh model")
+    return
+    # try:
+    #     model.load_state_dict(torch.load(MODEL_PATH))
+    #     print("Loaded existing model from persistent disk")
+    # except FileNotFoundError:
+    #     try:
+    #         model.load_state_dict(torch.load('best_lstm_model.pth'))
+    #         print("Loaded model from GitHub file, saving to persistent disk")
+    #         torch.save(model.state_dict(), MODEL_PATH)
+    #     except FileNotFoundError:
+    #         print("Starting with a fresh model")
 
 def load_or_init_training_log():
     global training_log
