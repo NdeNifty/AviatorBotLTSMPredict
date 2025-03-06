@@ -1,5 +1,6 @@
 # app/training_utils.py
 import torch
+import torch.nn as nn  # Add this import
 import threading
 import queue
 import os
@@ -97,7 +98,6 @@ def train_batch(queued_data):
     optimizer.step()
     scheduler.step(total_loss)
 
-    # Rest of the training logic remains the same...
     loss_history.append(float(total_loss.item()))
     if len(loss_history) > 1000:
         loss_history = loss_history[-1000:]

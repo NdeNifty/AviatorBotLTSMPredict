@@ -1,4 +1,5 @@
 # app/app.py
+import os
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from .data_utils import initialize_model, load_or_init_training_log, load_or_init_loss_history, calculate_performance
