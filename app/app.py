@@ -6,6 +6,7 @@ from .data_utils import initialize_model, load_or_init_training_log, load_or_ini
 
 # Initialize model and data first
 initialize_model()
+global model
 
 # Now import training_utils and initialize its components
 from .training_utils import training_queue, model, assign_safety_label, assign_rtp_window, initialize_training_utils
@@ -209,6 +210,20 @@ def delete_prediction_outcome_log():
         return jsonify({'message': 'Prediction outcome log deleted successfully'}), 200
     else:
         return jsonify({'error': 'Prediction outcome log not found'}), 404
+    
+# New endpoint to delete the model
+@app.route('/delete-model', methods=['DELETE'])
+def delete_model():
+    from .data_utils import MODEL_PATH, model
+    if os.path.exists(MODEL_PATH):
+        os.remove(MODEL_PATH)
+        # Reset the global model to None to force reinitialization
+        
+        model = None
+        print("Model file deleted successfully")
+        return jsonify({'message': 'Model file deleted successfully'}), 200
+    else:
+        return jsonify({'error': 'Model file not found'}), 404
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
