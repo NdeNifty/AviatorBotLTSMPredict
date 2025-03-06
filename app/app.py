@@ -2,11 +2,14 @@
 import os
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-from .data_utils import initialize_model, load_or_init_training_log, load_or_init_loss_history, calculate_performance
+import torch
+from datetime import datetime
+
+# Import necessary utilities
+from .data_utils import initialize_model, load_or_init_training_log, load_or_init_loss_history, calculate_performance, MODEL_PATH
 
 # Initialize model and data first
 initialize_model()
-global model
 
 # Now import training_utils and initialize its components
 from .training_utils import training_queue, model, assign_safety_label, assign_rtp_window, initialize_training_utils
@@ -18,7 +21,6 @@ CORS(app, resources={r"/performance": {"origins": "https://aviatorbotltsmpredict
 training_log = load_or_init_training_log()
 loss_history = load_or_init_loss_history()
 
-# Rest of the file remains the same...
 @app.route('/predict', methods=['POST'])
 def predict():
     global model
@@ -56,21 +58,17 @@ def predict():
         }
         return jsonify(response)
 
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
-
 @app.route('/train', methods=['POST'])
 def train():
     global training_queue
+    from .data_utils import TRAINING_QUEUE_PATH
     data = request.json.get('loggingData', {})
     if not data:
         return jsonify({'error': 'No logging data provided'}), 400
 
     training_queue.put({'loggingData': data, 'timestamp': datetime.utcnow().isoformat()})
     try:
-        with open('/model/training_queue.json', 'w') as f:
+        with open(TRAINING_QUEUE_PATH, 'w') as f:
             json.dump(list(training_queue.queue), f)
         print(f"Added to training queue, total: {training_queue.qsize()}")
     except (IOError, json.JSONEncodeError) as e:
@@ -98,7 +96,7 @@ def get_training_log():
             if not log_data:
                 return jsonify({'error': 'Training log is empty'}), 404
             return jsonify(log_data)
-        except (IOError, json.JSONDecodeError) as e:
+        except (IOError, json.JSONEncodeError) as e:
             print(f"Error reading training log: {e}")
             return jsonify({'error': 'Failed to read training log'}), 500
     else:
@@ -172,7 +170,7 @@ def delete_log():
     from .data_utils import training_log, TRAINING_LOG_PATH
     if os.path.exists(TRAINING_LOG_PATH):
         os.remove(TRAINING_LOG_PATH)
-        training_log = []
+        training_log.clear()
         print("Training log deleted successfully")
         return jsonify({'message': 'Training log deleted successfully'}), 200
     else:
@@ -183,7 +181,7 @@ def delete_loss_history():
     from .data_utils import loss_history, LOSS_HISTORY_PATH
     if os.path.exists(LOSS_HISTORY_PATH):
         os.remove(LOSS_HISTORY_PATH)
-        loss_history = []
+        loss_history.clear()
         print("Loss history deleted successfully")
         return jsonify({'message': 'Loss history deleted successfully'}), 200
     else:
@@ -194,7 +192,7 @@ def delete_stage2_log():
     from .data_utils import stage2_log, STAGE2_LOG_PATH
     if os.path.exists(STAGE2_LOG_PATH):
         os.remove(STAGE2_LOG_PATH)
-        stage2_log = []
+        stage2_log.clear()
         print("Stage 2 log deleted successfully")
         return jsonify({'message': 'Stage 2 log deleted successfully'}), 200
     else:
@@ -205,20 +203,19 @@ def delete_prediction_outcome_log():
     from .data_utils import prediction_outcome_log, PREDICTION_OUTCOME_LOG_PATH
     if os.path.exists(PREDICTION_OUTCOME_LOG_PATH):
         os.remove(PREDICTION_OUTCOME_LOG_PATH)
-        prediction_outcome_log = []
+        prediction_outcome_log.clear()
         print("Prediction outcome log deleted successfully")
         return jsonify({'message': 'Prediction outcome log deleted successfully'}), 200
     else:
         return jsonify({'error': 'Prediction outcome log not found'}), 404
-    
-# New endpoint to delete the model
+
 @app.route('/delete-model', methods=['DELETE'])
 def delete_model():
-    from .data_utils import MODEL_PATH, model
+    global model
+    from .data_utils import MODEL_PATH
     if os.path.exists(MODEL_PATH):
         os.remove(MODEL_PATH)
         # Reset the global model to None to force reinitialization
-        
         model = None
         print("Model file deleted successfully")
         return jsonify({'message': 'Model file deleted successfully'}), 200
@@ -227,6 +224,7 @@ def delete_model():
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
+    print(f"Starting Flask on port {port}")
     app.run(host='0.0.0.0', port=port)
 
 # Summary of Endpoints:
