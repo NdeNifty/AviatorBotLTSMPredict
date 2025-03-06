@@ -12,6 +12,7 @@ STAGE2_LOG_PATH = '/model/stage2_log.json'
 PREDICTION_OUTCOME_LOG_PATH = '/model/prediction_outcome_log.json'
 
 # Global variables
+save_interval = 10  # Define save_interval here (e.g., save model every 10 requests)
 model = None
 training_log = []
 loss_history = []
