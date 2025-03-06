@@ -3,6 +3,7 @@ import os
 import json
 from collections import deque
 from statistics import mean, stdev
+import torch  # Add this import
 
 # Define paths on persistent disk
 MODEL_PATH = '/model/best_lstm_model.pth'
@@ -11,8 +12,10 @@ LOSS_HISTORY_PATH = '/model/loss_history.json'
 STAGE2_LOG_PATH = '/model/stage2_log.json'
 PREDICTION_OUTCOME_LOG_PATH = '/model/prediction_outcome_log.json'
 
-# Global variables
+# Global variables and constants
 save_interval = 10  # Define save_interval here (e.g., save model every 10 requests)
+
+# Global variables
 model = None
 training_log = []
 loss_history = []
@@ -21,6 +24,8 @@ data_min, data_max = 1.0, 100.0
 last_sequence = None
 min_seq_length = 10
 max_seq_length = 30
+stage2_log = []
+prediction_outcome_log = []
 
 def initialize_model():
     global model
