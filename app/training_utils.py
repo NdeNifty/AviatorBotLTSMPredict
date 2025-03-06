@@ -7,13 +7,22 @@ import json
 from datetime import datetime
 from .data_utils import model, training_log, loss_history, data_buffer, data_min, data_max, min_seq_length, max_seq_length, MODEL_PATH, TRAINING_LOG_PATH, LOSS_HISTORY_PATH, STAGE2_LOG_PATH, stage2_log, PREDICTION_OUTCOME_LOG_PATH, prediction_outcome_log, save_interval
 
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)  # Added weight decay
-criterion = nn.HuberLoss(delta=3.0)
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5, verbose=True)
+# Define these as None initially, and initialize them later
+optimizer = None
+criterion = None
+scheduler = None
 request_count = 0
 training_queue = queue.Queue()
-BATCH_SIZE = 10  # Process in batches
+BATCH_SIZE = 10
 VALIDATION_SPLIT = 0.2
+
+def initialize_training_utils():
+    global optimizer, criterion, scheduler
+    if model is None:
+        raise ValueError("Model must be initialized before training_utils")
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
+    criterion = nn.HuberLoss(delta=3.0)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5, verbose=True)
 
 def load_or_init_training_queue():
     global training_queue
@@ -66,7 +75,6 @@ def train_batch(queued_data):
     if not sequences:
         return
 
-    # Normalize data
     seq_tensor = torch.stack([torch.FloatTensor([(x - data_min) / (data_max - data_min) for x in seq]).unsqueeze(0).unsqueeze(0) for seq in sequences])
     actual_tensor = torch.FloatTensor(actual_multipliers).unsqueeze(1)
 
@@ -76,12 +84,10 @@ def train_batch(queued_data):
     confidence_scores = outputs['confidence_score']
     classifier_out = outputs['classifier_output']
 
-    # Pseudo-labels
     safety_labels = [assign_safety_label(confidence, pred) for confidence, pred in zip(confidence_scores.tolist(), predicted_multipliers.tolist())]
     rtp_windows = [assign_rtp_window(seq) for seq in sequences]
-    classifier_labels = torch.tensor([0 if label == "Safe" else 1 if label == "Danger" else 2 for label in safety_labels])  # Simplified
+    classifier_labels = torch.tensor([0 if label == "Safe" else 1 if label == "Danger" else 2 for label in safety_labels])
 
-    # Loss calculation
     multiplier_loss = criterion(predicted_multipliers, actual_tensor)
     classifier_loss = nn.CrossEntropyLoss()(classifier_out, classifier_labels)
     total_loss = multiplier_loss + classifier_loss
@@ -91,6 +97,7 @@ def train_batch(queued_data):
     optimizer.step()
     scheduler.step(total_loss)
 
+    # Rest of the training logic remains the same...
     loss_history.append(float(total_loss.item()))
     if len(loss_history) > 1000:
         loss_history = loss_history[-1000:]
@@ -100,7 +107,6 @@ def train_batch(queued_data):
     except (IOError, json.JSONEncodeError) as e:
         print(f"Error saving loss history: {e}")
 
-    # Log training data
     for i, (seq, pred, act, conf, safe, rtp) in enumerate(zip(sequences, predicted_multipliers.tolist(), actual_multipliers, confidence_scores.tolist(), safety_labels, rtp_windows)):
         training_log.append({
             'sequence': seq,
@@ -118,7 +124,6 @@ def train_batch(queued_data):
         with open(TRAINING_LOG_PATH, 'w') as f:
             json.dump(training_log, f)
 
-    # Log Stage 2 data
     for data in queued_data:
         stage2_log.append(data.get('loggingData', {}))
     try:
@@ -131,7 +136,6 @@ def train_batch(queued_data):
         with open(STAGE2_LOG_PATH, 'w') as f:
             json.dump(stage2_log, f)
 
-    # Log prediction outcomes
     for i, (seq, pred, act, conf, safe, rtp) in enumerate(zip(sequences, predicted_multipliers.tolist(), actual_multipliers, confidence_scores.tolist(), safety_labels, rtp_windows)):
         prediction_outcome_log.append({
             'predicted_multiplier': float(pred),
@@ -170,21 +174,19 @@ def training_loop():
             for _ in queued_data:
                 training_queue.task_done()
         
-        # Validation
-        if training_log and len(training_log) > 10:  # Ensure enough data
+        if training_log and len(training_log) > 10:
             val_size = int(len(training_log) * VALIDATION_SPLIT)
             train_data = training_log[:-val_size]
             val_data = training_log[-val_size:]
             val_loss = calculate_validation_loss(val_data)
             print(f"Validation Loss: {val_loss:.4f}")
-            if val_loss > previous_val_loss:  # Simple early stopping (needs tuning)
+            if val_loss > previous_val_loss:  # Needs tuning
                 print("Validation loss increased, considering early stopping")
-                break  # Placeholder for actual early stopping logic
+                break
         
-        threading.Event().wait(60)  # Check every minute
+        threading.Event().wait(60)
 
 def calculate_validation_loss(val_data):
-    # Placeholder for validation loss calculation
     sequences = [entry['sequence'] for entry in val_data]
     actuals = [entry['actual'] for entry in val_data]
     seq_tensor = torch.stack([torch.FloatTensor([(x - data_min) / (data_max - data_min) for x in seq]).unsqueeze(0).unsqueeze(0) for seq in sequences])

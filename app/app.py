@@ -2,16 +2,21 @@
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from .data_utils import initialize_model, load_or_init_training_log, load_or_init_loss_history, calculate_performance
-from .training_utils import training_queue, model, assign_safety_label, assign_rtp_window
+
+# Initialize model and data first
+initialize_model()
+
+# Now import training_utils and initialize its components
+from .training_utils import training_queue, model, assign_safety_label, assign_rtp_window, initialize_training_utils
+initialize_training_utils()
 
 app = Flask(__name__, static_folder='static')
 CORS(app, resources={r"/performance": {"origins": "https://aviatorbotltsmpredict.onrender.com"}, r"/training-log": {"origins": "https://aviatorbotltsmpredict.onrender.com"}})
 
-# Initialize model and data
-initialize_model()
 training_log = load_or_init_training_log()
 loss_history = load_or_init_loss_history()
 
+# Rest of the file remains the same...
 @app.route('/predict', methods=['POST'])
 def predict():
     global model
@@ -29,7 +34,7 @@ def predict():
     data_max = min(max(data_max, max(sequence)), 300.0)
 
     seq_normalized = [(x - data_min) / (data_max - data_min) for x in sequence]
-    seq_tensor = torch.FloatTensor(seq_normalized).unsqueeze(0).unsqueeze(0)  # Shape: (1, 1, seq_length)
+    seq_tensor = torch.FloatTensor(seq_normalized).unsqueeze(0).unsqueeze(0)
 
     with torch.no_grad():
         model.eval()
@@ -38,7 +43,6 @@ def predict():
         confidence_score = outputs['confidence_score'].item()
         classifier_out = outputs['classifier_output']
         
-        # Assign labels
         safety_label = assign_safety_label(confidence_score, predicted_multiplier)
         rtp_window = assign_rtp_window(sequence)
         
@@ -49,6 +53,11 @@ def predict():
             'RTP_window': rtp_window
         }
         return jsonify(response)
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
 
 @app.route('/train', methods=['POST'])
 def train():
@@ -231,3 +240,6 @@ if __name__ == '__main__':
 # /delete-prediction-outcome-log (DELETE): Deletes the prediction outcome log file (prediction_outcome_log.json) from the persistent disk if it exists,
 #                                         resets the in-memory prediction_outcome_log.
 # Hope this helps!
+
+
+
