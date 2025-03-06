@@ -1,6 +1,6 @@
 import os
 import json
-from collections import deque
+import queue  # Changed from collections.deque
 from statistics import mean, stdev
 import torch
 
@@ -18,13 +18,13 @@ os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
 
 # Global variables and constants
 save_interval = 10
-training_queue = deque(maxlen=1000)  # Queue for training data
+training_queue = queue.Queue()  # Changed to queue.Queue
 
 # Global variables
 model = None
 training_log = []
 loss_history = []
-data_buffer = deque(maxlen=1000)
+data_buffer = queue.Queue(maxsize=1000)  # Changed to queue.Queue for consistency
 data_min, data_max = 1.0, 100.0
 last_sequence = None
 min_seq_length = 10
@@ -37,7 +37,7 @@ def initialize_model():
     from .model import HybridCNNLSTMModel
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device in initialize_model: {device}")
-    model = HybridCNNLSTMModel(max_seq_length=max_seq_length).to(device)  # Move to GPU
+    model = HybridCNNLSTMModel(max_seq_length=max_seq_length).to(device)
     try:
         state_dict = torch.load(MODEL_PATH, map_location=device)
         model.load_state_dict(state_dict, strict=False)
@@ -50,5 +50,3 @@ def initialize_model():
             torch.save(model.state_dict(), MODEL_PATH)
         except (FileNotFoundError, RuntimeError) as e:
             print(f"Failed to load model due to {e}. Starting with a fresh model")
-
-# ... (rest of the file unchanged, e.g., save_training_log, update_loss_history, etc.)

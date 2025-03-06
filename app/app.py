@@ -1,9 +1,8 @@
-# app.py
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import torch
 from .data_utils import initialize_model, data_buffer, data_min, data_max, last_sequence, max_seq_length, training_queue, TRAINING_QUEUE_PATH
-from .training_utils import train_model, get_performance_metrics, get_training_log, assign_safety_label, assign_rtp_window
+from .training_utils import assign_safety_label, assign_rtp_window, get_performance_metrics, get_training_log  # Adjusted imports
 import os
 import json
 from datetime import datetime
@@ -20,24 +19,7 @@ print(f"Using device: {device}")
 # Initialize model with GPU support
 initialize_model()  # This will now use GPU if available (updated in data_utils.py)
 
-# Start training thread (if not already running)
-training_thread = None
-if not hasattr(app, 'training_thread_running') or not app.training_thread_running:
-    def start_training():
-        global training_thread
-        while True:
-            try:
-                if not training_queue.empty():
-                    data = training_queue.get()
-                    train_model(data['loggingData'])
-                else:
-                    time.sleep(1)  # Avoid busy waiting
-            except Exception as e:
-                print(f"Error in training thread: {e}")
-
-    training_thread = threading.Thread(target=start_training, daemon=True)
-    training_thread.start()
-    app.training_thread_running = True
+# Note: The training loop is already started in training_utils.py, so no additional thread is needed here
 
 # Route to predict the next multiplier
 @app.route('/predict', methods=['POST'])
@@ -79,7 +61,7 @@ def predict():
         confidence_score = outputs['confidence_score'].item()
         classifier_out = outputs['classifier_output']
         
-        safety_label = assign_safety_label(confidence_score, predicted_multiplier)
+        safety_label = assign_safety_label(confidence_score * 100, predicted_multiplier)  # Convert to percentage for your logic
         rtp_window = assign_rtp_window(padded_sequence)
         
         response = {
@@ -138,6 +120,10 @@ def train():
     data = request.json.get('loggingData', {})
     if not data:
         return jsonify({'error': 'No logging data provided'}), 400
+
+    # Add actual multiplier if not provided (assuming prediction outcome)
+    if 'Actual_Multiplier' not in data:
+        data['Actual_Multiplier'] = data.get('Multiplier_Outcome', 1.0)  # Fallback to latest multiplier
 
     training_queue.put({'loggingData': data, 'timestamp': datetime.utcnow().isoformat()})
     try:
