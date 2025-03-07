@@ -39,7 +39,7 @@ training_thread.start()
 # Route to predict the next multiplier
 @app.route('/predict', methods=['POST'])
 def predict():
-    global model
+    global model, data_min, data_max
     from .data_utils import data_buffer, data_min, data_max, last_sequence, max_seq_length
     
     prediction_data = request.json.get('predictionData', {})
@@ -59,10 +59,12 @@ def predict():
     while len(padded_sequence) < 10:
         padded_sequence.insert(0, 1.0)
     
+    print(f"Padded sequence: {padded_sequence}")
     data_buffer.extend(padded_sequence)
+    print(f"Data buffer after extend (length {len(data_buffer)}): {list(data_buffer)}")
     data_min = min(data_min, min(padded_sequence))
     data_max = min(max(data_max, max(padded_sequence)), 300.0)
-
+    print(f"Updated data_min: {data_min}, data_max: {data_max}")
     seq_normalized = [(x - data_min) / (data_max - data_min) for x in padded_sequence]
     seq_tensor = torch.FloatTensor(seq_normalized).unsqueeze(0).unsqueeze(0).to(device)
 

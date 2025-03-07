@@ -3,6 +3,7 @@ import json
 import queue
 from statistics import mean, stdev
 import torch
+from collections import deque  # Add this import
 
 # Define BASE_DIR based on persistent disk (update if mounted, e.g., '/data')
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Default to project dir
@@ -27,7 +28,7 @@ training_queue = queue.Queue()
 model = None
 training_log = []
 loss_history = []
-data_buffer = queue.Queue(maxsize=1000)
+data_buffer = deque(maxlen=1000)  # Change to deque with max length 1000
 data_min, data_max = 1.0, 100.0
 last_sequence = None
 min_seq_length = 10

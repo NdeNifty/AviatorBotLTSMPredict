@@ -6,7 +6,6 @@ import os
 import json
 from datetime import datetime
 from statistics import mean
-# Remove model from imports to avoid early binding
 from .data_utils import training_log, loss_history, data_buffer, data_min, data_max, min_seq_length, max_seq_length, MODEL_PATH, TRAINING_LOG_PATH, LOSS_HISTORY_PATH, STAGE2_LOG_PATH, stage2_log, PREDICTION_OUTCOME_LOG_PATH, prediction_outcome_log, save_interval
 
 # Define these as None initially, and initialize them later
@@ -201,5 +200,3 @@ def calculate_validation_loss(val_data, model):
         outputs = model(seq_tensor)
         predicted_multipliers = outputs['predicted_multiplier']
         return criterion(predicted_multipliers, actual_tensor).item()
-
-# Start training thread with model passed later
